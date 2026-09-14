@@ -1,3 +1,4 @@
+using GraceS3.Data;
 using GraceS3.Services;
 using Serilog;
 
@@ -11,30 +12,14 @@ public static class EndpointGroup
 			.RequireAuthorization()
 			.WithTags("Buckets");
 
-		group.MapGet("", HandleGetList).WithName("GetBucketList");
-		group.MapPost("", CreateBucketEndpoint.Handle).WithName("CreateBucket");
-		group.MapGet("{id:guid}", HandleGetOne).WithName("GetBucket");
-		group.MapPut("{id:guid}", HandleUpdate).WithName("UpdateBucket");
-		group.MapDelete("{id:guid}", HandleDelete).WithName("DeleteBucket");
-	}
+		GetBucketListEndpoint.Map(group);
 
-	private static async Task HandleGetList(CancellationToken cancellationToken)
-	{
-		throw new NotImplementedException();
-	}
+		CreateBucketEndpoint.Map(group);
 
-	private static async Task HandleDelete(Guid id)
-	{
-		throw new NotImplementedException();
-	}
+		GetBucketOneEndpoint.Map(group);
 
-	private static async Task HandleUpdate(Guid id)
-	{
-		throw new NotImplementedException();
-	}
+		UpdateBucketEndpoint.Map(group);
 
-	private static async Task HandleGetOne(Guid id)
-	{
-		throw new NotImplementedException();
+		DeleteBucketEndpoint.Map(group);
 	}
 }

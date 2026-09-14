@@ -10,7 +10,19 @@ public static class CreateBucketEndpoint
 {
 	public sealed record CreateBucketRequest(string Name);
 
-	public static async Task<IResult> Handle(
+	public sealed record CreateBucketConflictResponse(string Error);
+
+	public static void Map(IEndpointRouteBuilder builder)
+	{
+		builder
+			.MapPost("", Handle)
+			.WithName("CreateBucket")
+			.ProducesProblem(StatusCodes.Status500InternalServerError)
+			.Produces<BucketEntity>(StatusCodes.Status201Created)
+			.Produces<CreateBucketConflictResponse>(StatusCodes.Status409Conflict);
+	}
+
+	private static async Task<IResult> Handle(
 		CreateBucketRequest request,
 		Database database,
 		UserService userService,
@@ -27,7 +39,7 @@ public static class CreateBucketEndpoint
 			if (existing is not null)
 			{
 				return Results.Conflict(
-					new { error = "A bucket with the same name is already exist" }
+					new CreateBucketConflictResponse("A bucket with the same name is already exist")
 				);
 			}
 

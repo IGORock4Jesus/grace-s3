@@ -5,8 +5,6 @@ using GraceS3.Files;
 using GraceS3.Services;
 using Keycloak.AuthServices.Authorization;
 using Keycloak.AuthServices.Common;
-using Microsoft.AspNetCore.Authentication.BearerToken;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
 using Serilog;
@@ -27,15 +25,13 @@ builder.Services.AddOpenApi(options =>
 				.Value;
 
 			string authUrl =
-				$"{config.OAuthUri}/realms/{config.OAuthRealm}/protocol/openid-connect/auth";
+				$"{config.OAuthUri.TrimEnd('/')}/realms/{config.OAuthRealm}/protocol/openid-connect/auth";
 			string tokenUrl =
-				$"{config.OAuthUri}/realms/{config.OAuthRealm}/protocol/openid-connect/token";
+				$"{config.OAuthUri.TrimEnd('/')}/realms/{config.OAuthRealm}/protocol/openid-connect/token";
 
 			OpenApiSecurityScheme scheme = new()
 			{
 				Type = SecuritySchemeType.OAuth2,
-				// BearerFormat = "JWT",
-				// Scheme = JwtBearerDefaults.AuthenticationScheme,
 				Flows = new OpenApiOAuthFlows
 				{
 					AuthorizationCode = new OpenApiOAuthFlow
@@ -58,7 +54,10 @@ builder.Services.AddOpenApi(options =>
 
 			OpenApiSecurityRequirement requirement = new()
 			{
-				{ new OpenApiSecuritySchemeReference("KeycloakOAuth"), ["openid", "profile"] },
+				{
+					new OpenApiSecuritySchemeReference("KeycloakOAuth", document),
+					["openid", "profile"]
+				},
 			};
 
 			document.Security ??= [];
@@ -71,7 +70,20 @@ builder.Services.AddOpenApi(options =>
 
 builder.Services.Configure<AuthConfig>(builder.Configuration.GetSection("Auth"));
 
-builder.Services.AddKeycloakWebApiAuthentication(x => ConfigureKeycloak(x, builder));
+builder.Services.AddKeycloakWebApiAuthentication(
+	x => ConfigureKeycloak(x, builder),
+	options =>
+	{
+		AuthConfig config =
+			builder.Configuration.GetSection("Auth").Get<AuthConfig>()
+			?? throw new InvalidProgramException("Auth configuration is not defined");
+		string issuer = $"{config.Uri.TrimEnd('/')}/realms/{config.Realm}";
+
+		// Keycloak token issuers have no trailing slash after the realm name.
+		options.Authority = issuer;
+		options.TokenValidationParameters.ValidIssuer = issuer;
+	}
+);
 builder.Services.AddAuthorization().AddKeycloakAuthorization(x => ConfigureKeycloak(x, builder));
 
 static void ConfigureKeycloak(KeycloakInstallationOptions x, WebApplicationBuilder builder)
@@ -110,13 +122,14 @@ if (app.Environment.IsDevelopment())
 				.ServiceProvider.GetRequiredService<IOptions<SwaggerConfig>>()
 				.Value;
 
-			// options.EnablePersistAuthorization();
-			// options.OAuthUsePkce();
-			// options.OAuthAppName("Keycloak");
-			// options.OAuthRealm(config.OAuthRealm);
-			// options.OAuthClientId(config.OAuthClientID);
-			// options.OAuthClientId(config.OAuthClientID);
-			// options.OAuth2RedirectUrl(config.OAuthUri);
+			options.OAuthClientId(config.OAuthClientID);
+			options.OAuthAppName("GraceS3 Swagger");
+			options.OAuthUsePkce();
+			options.OAuthScopes("openid", "profile");
+			options.EnablePersistAuthorization();
+
+			// Swagger UI derives /swagger/oauth2-redirect.html from its browser URL.
+			// Register that callback on the public Keycloak client.
 		}
 	);
 }
