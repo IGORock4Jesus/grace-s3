@@ -1,11 +1,15 @@
-using GraceS3.Buckets.Endpoints;
-using GraceS3.Configs;
+using System.Security.Claims;
+using System.Text.Json.Serialization;
+using GraceS3;
 using GraceS3.Data;
-using GraceS3.Files;
+using GraceS3.Endpoints.Clients;
+using GraceS3.Files.Endpoints;
 using GraceS3.Services;
+using Hangfire;
+using Hangfire.PostgreSql;
 using Keycloak.AuthServices.Authorization;
 using Keycloak.AuthServices.Common;
-using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using Serilog;
 
@@ -14,16 +18,23 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 Log.Logger = new LoggerConfiguration().WriteTo.Console().WriteTo.Debug().CreateLogger();
 builder.Host.UseSerilog(Log.Logger);
 
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+	options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict;
+});
+
+ApplicationConfiguration config =
+	builder.Configuration.Get<ApplicationConfiguration>()
+	?? throw new InvalidProgramException("Application configuration is not defined");
+
+builder.Services.Configure<ApplicationConfiguration>(builder.Configuration);
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi(options =>
 {
 	options.AddDocumentTransformer(
 		(document, context, cancellationToken) =>
 		{
-			SwaggerConfig config = context
-				.ApplicationServices.GetRequiredService<IOptions<SwaggerConfig>>()
-				.Value;
-
 			string authUrl =
 				$"{config.OAuthUri.TrimEnd('/')}/realms/{config.OAuthRealm}/protocol/openid-connect/auth";
 			string tokenUrl =
@@ -68,42 +79,54 @@ builder.Services.AddOpenApi(options =>
 	);
 });
 
-builder.Services.Configure<AuthConfig>(builder.Configuration.GetSection("Auth"));
-
 builder.Services.AddKeycloakWebApiAuthentication(
 	x => ConfigureKeycloak(x, builder),
 	options =>
 	{
-		AuthConfig config =
-			builder.Configuration.GetSection("Auth").Get<AuthConfig>()
-			?? throw new InvalidProgramException("Auth configuration is not defined");
-		string issuer = $"{config.Uri.TrimEnd('/')}/realms/{config.Realm}";
+		string issuer = $"{config.OAuthUri.TrimEnd('/')}/realms/{config.OAuthRealm}";
 
-		// Keycloak token issuers have no trailing slash after the realm name.
 		options.Authority = issuer;
 		options.TokenValidationParameters.ValidIssuer = issuer;
 	}
 );
 builder.Services.AddAuthorization().AddKeycloakAuthorization(x => ConfigureKeycloak(x, builder));
 
-static void ConfigureKeycloak(KeycloakInstallationOptions x, WebApplicationBuilder builder)
+void ConfigureKeycloak(KeycloakInstallationOptions x, WebApplicationBuilder builder)
 {
-	AuthConfig config =
-		builder.Configuration.GetSection("Auth").Get<AuthConfig>()
-		?? throw new InvalidProgramException("Auth configuration is not defined");
-
-	x.AuthServerUrl = config.Uri;
-	x.Realm = config.Realm;
-	x.Resource = config.ClientID;
-	x.Credentials.Secret = config.ClientSecret;
+	x.AuthServerUrl = config.OAuthUri;
+	x.Realm = config.OAuthRealm;
+	x.Resource = config.OAuthClientID;
+	x.Credentials.Secret = config.OAuthClientSecret;
 	x.VerifyTokenAudience = false; // TODO: enable on prod
 }
 
-builder.Services.Configure<DatabaseConfig>(builder.Configuration.GetSection("Database"));
+builder.Services.AddScoped<UserService>().AddSingleton<Database>().AddScoped<DiskService>();
 
-builder.Services.AddScoped<UserService>().AddSingleton<Database>();
+ConfigureHangfire();
+void ConfigureHangfire()
+{
+	builder.Services.AddHangfire(configuration =>
+		configuration
+			.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+			.UseSimpleAssemblyNameTypeSerializer()
+			.UseRecommendedSerializerSettings()
+			.UsePostgreSqlStorage(x =>
+			{
+				x.UseNpgsqlConnection(config.DatabaseConnectionString);
+			})
+	);
 
-builder.Services.Configure<SwaggerConfig>(builder.Configuration.GetSection("Swagger"));
+	builder.Services.AddHangfireServer();
+}
+
+ConfigureDatabase();
+void ConfigureDatabase()
+{
+	builder.Services.AddDbContextPool<Database>(x =>
+	{
+		x.UseNpgsql(config.DatabaseConnectionString);
+	});
+}
 
 WebApplication app = builder.Build();
 
@@ -118,11 +141,8 @@ if (app.Environment.IsDevelopment())
 			options.DisplayOperationId();
 
 			using IServiceScope scope = app.Services.CreateScope();
-			SwaggerConfig config = scope
-				.ServiceProvider.GetRequiredService<IOptions<SwaggerConfig>>()
-				.Value;
 
-			options.OAuthClientId(config.OAuthClientID);
+			options.OAuthClientId(config.SwaggerOAuthClientID);
 			options.OAuthAppName("GraceS3 Swagger");
 			options.OAuthUsePkce();
 			options.OAuthScopes("openid", "profile");
@@ -132,12 +152,14 @@ if (app.Environment.IsDevelopment())
 			// Register that callback on the public Keycloak client.
 		}
 	);
+
+	app.UseHangfireDashboard();
 }
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapBuckets();
-app.MapFiles();
+app.MapCliensEndpoints();
+app.MapObjectsEndpoints();
 
 await app.RunAsync();

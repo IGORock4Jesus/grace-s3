@@ -1,3 +1,6 @@
 <Solution>
+  <Project Path="GraceS3.Client/GraceS3.Client.csproj" />
+  <Project Path="GraceS3.Common/GraceS3.Common.csproj" />
   <Project Path="GraceS3/GraceS3.csproj" />
+  <Project Path="TestApplication/TestApplication.csproj" />
 </Solution>
