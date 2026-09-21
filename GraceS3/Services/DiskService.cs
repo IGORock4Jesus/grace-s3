@@ -1,4 +1,5 @@
 using GraceS3.Data;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Options;
 
 namespace GraceS3.Services;
@@ -37,5 +38,44 @@ public sealed class DiskService(IOptions<ApplicationConfiguration> options)
 	private string GetWorkingDirectory()
 	{
 		return Path.Combine(Path.GetTempPath(), TempAppDirectory, options.Value.WorkingDirectory);
+	}
+
+	internal Stream OpenStream(ObjectEntity @object)
+	{
+		string path = Path.Combine(
+			GetWorkingDirectory(),
+			@object.ClientId.ToString(),
+			@object.Id.ToString()
+		);
+		if (!File.Exists(path))
+		{
+			throw new FileNotFoundException($"File not found: {path}");
+		}
+
+		return File.OpenRead(path);
+	}
+
+	internal async Task PutFile(Guid clientId, Guid objectId, Stream stream)
+	{
+		string path = Path.Combine(GetWorkingDirectory(), clientId.ToString(), objectId.ToString());
+
+		if (File.Exists(path))
+		{
+			throw new InvalidProgramException($"The same file is already exist: {path}");
+		}
+
+		await using FileStream writer = File.OpenWrite(path);
+		await stream.CopyToAsync(writer);
+	}
+
+	internal async Task TryDeleteFile(Guid clientId, Guid objectId)
+	{
+		string path = Path.Combine(GetWorkingDirectory(), clientId.ToString(), objectId.ToString());
+		if (!File.Exists(path))
+		{
+			return;
+		}
+
+		File.Delete(path);
 	}
 }

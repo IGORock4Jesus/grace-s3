@@ -5,13 +5,15 @@ using GraceS3.Data;
 using GraceS3.Endpoints.Clients;
 using GraceS3.Files.Endpoints;
 using GraceS3.Services;
-using Hangfire;
-using Hangfire.PostgreSql;
 using Keycloak.AuthServices.Authorization;
 using Keycloak.AuthServices.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using Serilog;
+using TickerQ.Dashboard.DependencyInjection;
+using TickerQ.DependencyInjection;
+using TickerQ.EntityFrameworkCore.DbContextFactory;
+using TickerQ.EntityFrameworkCore.DependencyInjection;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +23,12 @@ builder.Host.UseSerilog(Log.Logger);
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
 	options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict;
+});
+
+// builder.Services.AddAntiforgery();
+builder.Services.AddCors(x =>
+{
+	x.AddDefaultPolicy(x => x.AllowAnyHeader().AllowAnyMethod().AllowAnyOrigin());
 });
 
 ApplicationConfiguration config =
@@ -102,21 +110,26 @@ void ConfigureKeycloak(KeycloakInstallationOptions x, WebApplicationBuilder buil
 
 builder.Services.AddScoped<UserService>().AddSingleton<Database>().AddScoped<DiskService>();
 
-ConfigureHangfire();
-void ConfigureHangfire()
+ConfigureTaskManager();
+void ConfigureTaskManager()
 {
-	builder.Services.AddHangfire(configuration =>
-		configuration
-			.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-			.UseSimpleAssemblyNameTypeSerializer()
-			.UseRecommendedSerializerSettings()
-			.UsePostgreSqlStorage(x =>
+	builder.Services.AddTickerQ(x =>
+	{
+		x.AddDashboard();
+		x.AddOperationalStore(x =>
+		{
+			x.UseTickerQDbContext<GraceTickerQDbContext>(x =>
 			{
-				x.UseNpgsqlConnection(config.DatabaseConnectionString);
-			})
-	);
-
-	builder.Services.AddHangfireServer();
+				x.UseNpgsql(
+					config.DatabaseConnectionString,
+					x =>
+					{
+						// x.MigrationsAssembly(typeof(Program).Assembly.GetName().Name);
+					}
+				);
+			});
+		});
+	});
 }
 
 ConfigureDatabase();
@@ -152,12 +165,16 @@ if (app.Environment.IsDevelopment())
 			// Register that callback on the public Keycloak client.
 		}
 	);
-
-	app.UseHangfireDashboard();
 }
+
+app.UseTickerQ();
+
+app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// app.UseAntiforgery();
 
 app.MapCliensEndpoints();
 app.MapObjectsEndpoints();

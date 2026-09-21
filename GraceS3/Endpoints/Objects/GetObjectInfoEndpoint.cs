@@ -1,26 +1,32 @@
 using System.Text.Json.Serialization;
-using GraceS3.Common;
 using GraceS3.Data;
 using GraceS3.Services;
 using GraceS3.Validators;
-using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 namespace GraceS3.Endpoints.Objects;
 
-public static class DownloadObjectEndpoint
+public static partial class GetObjectInfoEndpoint
 {
-	public record DownloadObjectNotFoundResponse(string Message);
+	public record GetObjectNotFoundResponse(string Message);
+
+	public record GetObjectResponse(
+		Guid ClientId,
+		Guid ObjectId,
+		string FileName,
+		string ContentType,
+		string ContentDisposition,
+		long Size
+	);
 
 	public static void Map(IEndpointRouteBuilder builder)
 	{
 		builder
-			.MapGet("{objectId:guid}", Handle)
-			.WithName("DownloadObject")
+			.MapGet("{objectId:guid}/info", Handle)
+			.WithName("GetObjectInfo")
 			.ProducesProblem(StatusCodes.Status500InternalServerError)
-			.Produces<FileStreamHttpResult>(StatusCodes.Status200OK)
+			.Produces<GetObjectResponse>(StatusCodes.Status200OK)
 			.Produces(StatusCodes.Status404NotFound);
 	}
 
@@ -73,16 +79,20 @@ public static class DownloadObjectEndpoint
 				return TypedResults.NotFound();
 			}
 
-			return TypedResults.File(
-				fileStream: diskService.OpenStream(@object),
-				contentType: @object.ContentType,
-				fileDownloadName: @object.FileName,
-				enableRangeProcessing: true
+			return TypedResults.Ok(
+				new GetObjectResponse(
+					@object.ClientId,
+					@object.Id,
+					@object.FileName,
+					@object.ContentType,
+					@object.ContentDisposition,
+					@object.Size
+				)
 			);
 		}
 		catch (Exception ex)
 		{
-			Log.Error(ex, "Failed to download file");
+			Log.Error(ex, "Failed to get file info");
 
 			throw;
 		}

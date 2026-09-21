@@ -1,5 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using GraceS3.Common;
 using Microsoft.Extensions.Primitives;
 
 namespace GraceS3.Validators;
@@ -14,182 +17,125 @@ public static class S3PresignedUrlValidator
 		string service
 	)
 	{
-		// ------------------------------------------------------------
-		// 1. Получаем X-Amz параметры
-		// ------------------------------------------------------------
-
 		if (
-			!request.Query.TryGetValue("X-Amz-Algorithm", out StringValues algorithm)
-			|| algorithm != "AWS4-HMAC-SHA256"
+			!GetParameter(request, PresignedUrlQueryParameters.Algorithm, out string? algorithm)
+			|| algorithm != S3SignatureV4.Algorithm
+			|| !GetParameter(
+				request,
+				PresignedUrlQueryParameters.Credential,
+				out string? credential
+			)
+			|| !GetParameter(request, PresignedUrlQueryParameters.Date, out string? timestamp)
+			|| !GetParameter(request, PresignedUrlQueryParameters.Expires, out string? expiresValue)
+			|| !GetParameter(
+				request,
+				PresignedUrlQueryParameters.SignedHeaders,
+				out string? signedHeaders
+			)
+			|| !GetParameter(request, PresignedUrlQueryParameters.Signature, out string? signature)
 		)
-		{
-			return false;
-		}
-
-		if (!request.Query.TryGetValue("X-Amz-Credential", out StringValues credential))
-		{
-			return false;
-		}
-
-		if (!request.Query.TryGetValue("X-Amz-Date", out StringValues amzDate))
-		{
-			return false;
-		}
-
-		if (!request.Query.TryGetValue("X-Amz-Expires", out StringValues expiresValue))
-		{
-			return false;
-		}
-
-		if (!request.Query.TryGetValue("X-Amz-SignedHeaders", out StringValues signedHeaders))
-		{
-			return false;
-		}
-
-		if (!request.Query.TryGetValue("X-Amz-Signature", out StringValues signature))
-		{
-			return false;
-		}
-
-		// ------------------------------------------------------------
-		// 2. Проверяем Credential
-		//
-		// accessKey/date/region/service/aws4_request
-		// ------------------------------------------------------------
-
-		string[] credentialParts = credential.ToString().Split('/');
-
-		if (credentialParts.Length != 5)
 			return false;
 
-		if (credentialParts[0] != accessKey)
+		string[] parts = credential.Split('/');
+		if (
+			parts.Length != 5
+			|| parts[0] != accessKey
+			|| parts[2] != region
+			|| parts[3] != service
+			|| parts[4] != S3SignatureV4.DefaultAws4Request
+		)
 			return false;
-
-		string date = credentialParts[1];
-		string credentialRegion = credentialParts[2];
-		string credentialService = credentialParts[3];
-		string terminal = credentialParts[4];
-
-		if (credentialRegion != region)
-			return false;
-
-		if (credentialService != service)
-			return false;
-
-		if (terminal != "aws4_request")
-			return false;
-
-		// ------------------------------------------------------------
-		// 3. Проверяем дату
-		// ------------------------------------------------------------
 
 		if (
 			!DateTimeOffset.TryParseExact(
-				amzDate!,
+				timestamp,
 				"yyyyMMdd'T'HHmmss'Z'",
-				null,
-				System.Globalization.DateTimeStyles.AssumeUniversal,
+				CultureInfo.InvariantCulture,
+				DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
 				out DateTimeOffset requestTime
 			)
+			|| parts[1] != requestTime.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+			|| !int.TryParse(
+				expiresValue,
+				NumberStyles.None,
+				CultureInfo.InvariantCulture,
+				out int expires
+			)
+			|| expires < 1
+			|| expires > S3SignatureV4.MaxExpiresSeconds
 		)
-		{
-			return false;
-		}
-
-		// ------------------------------------------------------------
-		// 4. Проверяем Expires
-		// ------------------------------------------------------------
-
-		if (!int.TryParse(expiresValue, out int expires))
-			return false;
-
-		// Например, ограничиваем максимальный TTL.
-		if (expires <= 0 || expires > 7 * 24 * 60 * 60)
 			return false;
 
 		DateTimeOffset now = DateTimeOffset.UtcNow;
-
-		DateTimeOffset expiresAt = requestTime.AddSeconds(expires);
-
-		if (now > expiresAt)
+		if (
+			now - requestTime > TimeSpan.FromSeconds(expires)
+			|| requestTime - now > TimeSpan.FromMinutes(5)
+		)
 			return false;
 
-		// Защита от URL с датой сильно в будущем.
-		if (requestTime > now.AddMinutes(5))
+		string[] headerNames = signedHeaders.Split(';');
+		if (
+			!headerNames.Contains("host", StringComparer.Ordinal)
+			|| !headerNames.SequenceEqual(
+				headerNames.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
+			)
+		)
 			return false;
 
-		// ------------------------------------------------------------
-		// 5. Проверяем SignedHeaders
-		// ------------------------------------------------------------
-
-		string signedHeadersValue = signedHeaders.ToString();
-
-		if (string.IsNullOrWhiteSpace(signedHeadersValue))
-			return false;
-
-		string[] signedHeaderNames = signedHeadersValue.Split(
-			';',
-			StringSplitOptions.RemoveEmptyEntries
-		);
-
-		if (!signedHeaderNames.Contains("host", StringComparer.Ordinal))
+		StringBuilder canonicalHeaders = new();
+		foreach (string name in headerNames)
 		{
-			return false;
+			if (string.IsNullOrEmpty(name) || name != name.ToLowerInvariant())
+				return false;
+			string value;
+			if (name == "host")
+			{
+				if (!request.Host.HasValue)
+					return false;
+				value = request.Host.Value!;
+			}
+			else if (request.Headers.TryGetValue(name, out StringValues values))
+				value = values.ToString();
+			else
+				return false;
+			canonicalHeaders
+				.Append(name)
+				.Append(':')
+				.Append(S3SignatureV4.NormalizeHeaderValue(value))
+				.Append('\n');
 		}
 
-		// ------------------------------------------------------------
-		// 6. Создаем Canonical Request
-		// ------------------------------------------------------------
+		IEnumerable<KeyValuePair<string, string>> query = request
+			.Query.Where(x => x.Key != PresignedUrlQueryParameters.Signature)
+			.SelectMany(x =>
+				x.Value.Select(value => KeyValuePair.Create(x.Key, value ?? string.Empty))
+			);
+		string canonicalRequest = S3SignatureV4.CreateCanonicalRequest(
+			request.Method,
+			request.PathBase.Add(request.Path).Value ?? "/",
+			S3SignatureV4.CanonicalQueryString(query),
+			canonicalHeaders.ToString(),
+			signedHeaders
+		);
+		string expectedSignature = S3SignatureV4.CalculateSignature(
+			secretKey,
+			parts[1],
+			region,
+			service,
+			S3SignatureV4.CreateStringToSign(
+				timestamp,
+				S3SignatureV4.CredentialScope(parts[1], region, service),
+				canonicalRequest
+			)
+		);
 
-		string canonicalQueryString = BuildCanonicalQueryString(request.Query);
-
-		string canonicalHeaders = BuildCanonicalHeaders(request, signedHeaderNames);
-
-		string payloadHash = "UNSIGNED-PAYLOAD";
-
-		string canonicalRequest =
-			$"{request.Method}\n"
-			+ $"{GetCanonicalUri(request)}\n"
-			+ $"{canonicalQueryString}\n"
-			+ $"{canonicalHeaders}\n"
-			+ $"{signedHeadersValue}\n"
-			+ $"{payloadHash}";
-
-		// ------------------------------------------------------------
-		// 7. String To Sign
-		// ------------------------------------------------------------
-
-		string credentialScope = $"{date}/{region}/{service}/aws4_request";
-
-		string canonicalRequestHash = Sha256Hex(canonicalRequest);
-
-		string stringToSign =
-			$"AWS4-HMAC-SHA256\n"
-			+ $"{amzDate}\n"
-			+ $"{credentialScope}\n"
-			+ $"{canonicalRequestHash}";
-
-		// ------------------------------------------------------------
-		// 8. Получаем signing key
-		// ------------------------------------------------------------
-
-		byte[] signingKey = DeriveSigningKey(secretKey, date, region, service);
-
-		// ------------------------------------------------------------
-		// 9. Вычисляем ожидаемую подпись
-		// ------------------------------------------------------------
-
-		string expectedSignature = HmacSha256Hex(signingKey, stringToSign);
-
-		// ------------------------------------------------------------
-		// 10. Constant-time comparison
-		// ------------------------------------------------------------
-
+		if (signature.Length != 64)
+			return false;
 		try
 		{
 			return CryptographicOperations.FixedTimeEquals(
 				Convert.FromHexString(expectedSignature),
-				Convert.FromHexString(signature!)
+				Convert.FromHexString(signature)
 			);
 		}
 		catch (FormatException)
@@ -198,107 +144,22 @@ public static class S3PresignedUrlValidator
 		}
 	}
 
-	private static string BuildCanonicalQueryString(IQueryCollection query)
-	{
-		return string.Join(
-			"&",
-			query
-				.Where(x =>
-					!string.Equals(x.Key, "X-Amz-Signature", StringComparison.OrdinalIgnoreCase)
-				)
-				.SelectMany(x =>
-					x.Value.Select(value => new KeyValuePair<string, string>(
-						x.Key,
-						value ?? string.Empty
-					))
-				)
-				.OrderBy(x => x.Key, StringComparer.Ordinal)
-				.ThenBy(x => x.Value, StringComparer.Ordinal)
-				.Select(x => $"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value)}")
-		);
-	}
-
-	private static string BuildCanonicalHeaders(HttpRequest request, string[] signedHeaders)
-	{
-		StringBuilder result = new StringBuilder();
-
-		foreach (string headerName in signedHeaders)
-		{
-			string value;
-
-			if (headerName == "host")
-			{
-				value = request.Host.Value!;
-			}
-			else
-			{
-				if (!request.Headers.TryGetValue(headerName, out StringValues headerValue))
-				{
-					throw new InvalidOperationException(
-						$"Signed header '{headerName}' is missing."
-					);
-				}
-
-				value = headerValue.ToString();
-			}
-
-			value = NormalizeHeaderValue(value);
-
-			result.Append(headerName);
-			result.Append(':');
-			result.Append(value);
-			result.Append('\n');
-		}
-
-		return result.ToString();
-	}
-
-	private static string NormalizeHeaderValue(string value)
-	{
-		return string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-	}
-
-	private static string GetCanonicalUri(HttpRequest request)
-	{
-		// Важно: здесь нужно использовать именно URI encoding,
-		// соответствующий S3 SigV4, а не произвольный Uri.EscapeUriString.
-		string path = request.Path.Value ?? "/";
-
-		return Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.OrdinalIgnoreCase);
-	}
-
-	private static byte[] DeriveSigningKey(
-		string secretKey,
-		string date,
-		string region,
-		string service
+	private static bool GetParameter(
+		HttpRequest request,
+		string key,
+		[NotNullWhen(true)] out string? value
 	)
 	{
-		byte[] kDate = HmacSha256(Encoding.UTF8.GetBytes("AWS4" + secretKey), date);
-
-		byte[] kRegion = HmacSha256(kDate, region);
-
-		byte[] kService = HmacSha256(kRegion, service);
-
-		return HmacSha256(kService, "aws4_request");
-	}
-
-	private static byte[] HmacSha256(byte[] key, string data)
-	{
-		using HMACSHA256 hmac = new HMACSHA256(key);
-
-		return hmac.ComputeHash(Encoding.UTF8.GetBytes(data));
-	}
-
-	private static string HmacSha256Hex(byte[] key, string data)
-	{
-		return Convert.ToHexString(HmacSha256(key, data)).ToLowerInvariant();
-	}
-
-	private static string Sha256Hex(string data)
-	{
-		return Convert
-			.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(data)))
-			.ToLowerInvariant();
+		value = null;
+		// Query collections use case-insensitive lookup; signature parameter names are case-sensitive.
+		if (
+			!request.Query.Keys.Contains(key, StringComparer.Ordinal)
+			|| !request.Query.TryGetValue(key, out StringValues values)
+			|| values.Count != 1
+			|| string.IsNullOrEmpty(values[0])
+		)
+			return false;
+		value = values[0]!;
+		return true;
 	}
 }

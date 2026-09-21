@@ -54,6 +54,11 @@ namespace GraceS3.Migrations
                     b.Property<Guid>("ClientId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ContentDisposition")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasMaxLength(256)
@@ -63,10 +68,6 @@ namespace GraceS3.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
-
-                    b.Property<string>("FileStatus")
-                        .IsRequired()
-                        .HasColumnType("text");
 
                     b.Property<long>("Size")
                         .HasColumnType("bigint");

@@ -18,8 +18,7 @@ public sealed class ObjectEntityConfiguration : IEntityTypeConfiguration<ObjectE
 
 		builder.Property(x => x.FileName).IsRequired().HasMaxLength(256);
 		builder.Property(x => x.ContentType).IsRequired().HasMaxLength(256);
+		builder.Property(x => x.ContentDisposition).IsRequired().HasMaxLength(256);
 		builder.Property(x => x.Size);
-
-		builder.Property(x => x.FileStatus).HasConversion<string>();
 	}
 }

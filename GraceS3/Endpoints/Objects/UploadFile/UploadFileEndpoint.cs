@@ -1,31 +1,27 @@
-using System.Text.Json.Serialization;
-using GraceS3.Common;
 using GraceS3.Data;
 using GraceS3.Services;
+using GraceS3.Utils;
 using GraceS3.Validators;
-using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
-namespace GraceS3.Endpoints.Objects;
+namespace GraceS3.Endpoints.Objects.UploadFile;
 
-public static class DownloadObjectEndpoint
+public static partial class UploadObjectEndpoint
 {
-	public record DownloadObjectNotFoundResponse(string Message);
-
 	public static void Map(IEndpointRouteBuilder builder)
 	{
 		builder
-			.MapGet("{objectId:guid}", Handle)
-			.WithName("DownloadObject")
+			.MapPost("", Handle)
+			.WithName("UploadObject")
+			.DisableAntiforgery()
 			.ProducesProblem(StatusCodes.Status500InternalServerError)
-			.Produces<FileStreamHttpResult>(StatusCodes.Status200OK)
+			.Produces<UploadObjectResponse>(StatusCodes.Status201Created)
 			.Produces(StatusCodes.Status404NotFound);
 	}
 
 	private static async Task<IResult> Handle(
-		Guid objectId,
+		IFormFile formFile,
 		[AsParameters] GraceAuthRequest authRequest,
 		HttpRequest httpRequest,
 		Database database,
@@ -64,25 +60,31 @@ public static class DownloadObjectEndpoint
 				return TypedResults.Unauthorized();
 			}
 
-			ObjectEntity? @object = await database.Objects.FirstOrDefaultAsync(
-				x => x.ClientId == client.Id && x.Id == objectId,
-				cancellationToken
-			);
-			if (@object is null)
-			{
-				return TypedResults.NotFound();
-			}
+			Rollback<RollbackContext> rollback = new();
+			rollback.Add(new CreateObjectInDatabase());
+			rollback.Add(new PutFileOnDisk());
 
-			return TypedResults.File(
-				fileStream: diskService.OpenStream(@object),
-				contentType: @object.ContentType,
-				fileDownloadName: @object.FileName,
-				enableRangeProcessing: true
+			RollbackContext rollbackContext = new(
+				Guid.CreateVersion7(),
+				client.Id,
+				formFile.FileName,
+				formFile.ContentType,
+				formFile.ContentDisposition,
+				formFile.Length,
+				database,
+				diskService,
+				formFile.OpenReadStream()
+			);
+			await rollback.ExecuteAllAsync(rollbackContext, cancellationToken);
+
+			return TypedResults.Created(
+				$"objects/{rollbackContext.ObjectId}",
+				new UploadObjectResponse(rollbackContext.ObjectId)
 			);
 		}
 		catch (Exception ex)
 		{
-			Log.Error(ex, "Failed to download file");
+			Log.Error(ex, "Failed to upload file");
 
 			throw;
 		}

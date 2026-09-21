@@ -6,9 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Dapper" Version="2.1.86" />
-    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.25" />
-    <PackageReference Include="Hangfire.PostgreSql" Version="1.21.1" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
     <PackageReference Include="Keycloak.AuthServices.Authentication" Version="3.0.0" />
     <PackageReference Include="Keycloak.AuthServices.Authorization" Version="3.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
@@ -20,9 +18,11 @@
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
-    <PackageReference Include="SQLite" Version="3.53.4" />
     <PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="10.2.3" />
     <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
+    <PackageReference Include="TickerQ" Version="10.4.0" />
+    <PackageReference Include="TickerQ.Dashboard" Version="10.4.0" />
+    <PackageReference Include="TickerQ.EntityFrameworkCore" Version="10.4.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,4 +1,5 @@
 using GraceS3.Endpoints.Objects;
+using GraceS3.Endpoints.Objects.UploadFile;
 using Microsoft.AspNetCore.Mvc;
 
 namespace GraceS3.Files.Endpoints;
@@ -7,14 +8,11 @@ public static class ObjectsEndpointGroup
 {
 	public static void MapObjectsEndpoints(this WebApplication application)
 	{
-		RouteGroupBuilder group = application
-			.MapGroup("objects")
-			.RequireAuthorization()
-			.WithTags("Objects");
+		RouteGroupBuilder group = application.MapGroup("objects").WithTags("Objects");
 
-		// GetFilesListEndpoint.Map(group);
+		GetObjectInfoEndpoint.Map(group);
 
-		// UploadFileEndpoint.Map(group);
+		UploadObjectEndpoint.Map(group);
 
 		DownloadObjectEndpoint.Map(group);
 
