@@ -32,3 +32,24 @@ Bearer token.
 
 Документация: [Swagger UI OAuth 2.0](https://swagger.io/docs/open-source-tools/swagger-ui/usage/oauth2/),
 [Keycloak: браузерные клиенты](https://www.keycloak.org/securing-apps/javascript-adapter).
+
+## File storage
+
+Files are stored in `/var/lib/graces3` by default. Set `GRACES3_WORKING_DIRECTORY`
+to override it (for example `/var/graces3` or an absolute development directory).
+The service account needs read/write access to this directory. Relative paths are
+resolved against the service working directory, never the OS temporary directory.
+For Docker, mount a persistent volume at the configured storage path.
+
+When upgrading, stop the service and copy the contents of the old
+`<OS temp>/grace-s3/<previous GRACES3_WORKING_DIRECTORY>` directory to the new
+storage directory, preserving client UUID directories, file UUID names and permissions.
+Set the new path before restarting; existing files are not moved automatically.
+
+The admin Files page groups files into folders named by access key; physical
+directories continue to use client UUIDs. Both folders and files are sorted by name.
+Admin downloads require the admin role. Clients can be deleted only when empty.
+
+Administrators can delete individual files from the Files page after confirmation.
+Deletion removes the stored file and its database record; it cannot be undone.
+If database cleanup fails after disk deletion, retry the request to remove the remaining record.

@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="GraceS3.AdminProxy.Tests/GraceS3.AdminProxy.Tests.csproj" />
+  <Project Path="GraceS3.AdminProxy/GraceS3.AdminProxy.csproj" />
   <Project Path="GraceS3.Client/GraceS3.Client.csproj" />
   <Project Path="GraceS3.Common/GraceS3.Common.csproj" />
   <Project Path="GraceS3/GraceS3.csproj" />

@@ -1,12 +1,10 @@
 using GraceS3.Data;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Options;
 
 namespace GraceS3.Services;
 
 public sealed class DiskService(IOptions<ApplicationConfiguration> options)
 {
-	private const string TempAppDirectory = "grace-s3";
 
 	public string GetFilePath(string bucketId, string fileId)
 	{
@@ -37,7 +35,7 @@ public sealed class DiskService(IOptions<ApplicationConfiguration> options)
 
 	private string GetWorkingDirectory()
 	{
-		return Path.Combine(Path.GetTempPath(), TempAppDirectory, options.Value.WorkingDirectory);
+		return Path.GetFullPath(options.Value.WorkingDirectory);
 	}
 
 	internal Stream OpenStream(ObjectEntity @object)
@@ -64,18 +62,22 @@ public sealed class DiskService(IOptions<ApplicationConfiguration> options)
 			throw new InvalidProgramException($"The same file is already exist: {path}");
 		}
 
-		await using FileStream writer = File.OpenWrite(path);
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		await using FileStream writer = new(path, FileMode.CreateNew, FileAccess.Write);
 		await stream.CopyToAsync(writer);
 	}
 
-	internal async Task TryDeleteFile(Guid clientId, Guid objectId)
+	internal Task TryDeleteFile(Guid clientId, Guid objectId)
 	{
-		string path = Path.Combine(GetWorkingDirectory(), clientId.ToString(), objectId.ToString());
-		if (!File.Exists(path))
+		string path = GetFilePath(clientId.ToString(), objectId.ToString());
+		try
 		{
-			return;
+			File.Delete(path);
 		}
-
-		File.Delete(path);
+		catch (DirectoryNotFoundException)
+		{
+			// The file is already gone, including its client directory.
+		}
+		return Task.CompletedTask;
 	}
 }

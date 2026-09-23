@@ -7,29 +7,31 @@ using Serilog;
 
 namespace GraceS3.Endpoints.Clients.CreateClient;
 
-public static class CreateClientEndpoint
+public static partial class CreateClientEndpoint
 {
-	public sealed record CreateClientListRequest(string AccessKey, string SecretKey);
-
-	public sealed record CreateClientListResponse(Guid Id, string AccessKey);
-
 	public static void Map(IEndpointRouteBuilder builder)
 	{
 		builder
 			.MapPost("", Handle)
 			.WithName("CreateClient")
 			.ProducesProblem(StatusCodes.Status500InternalServerError)
-			.Produces<CreateClientListResponse>(StatusCodes.Status201Created)
+			.Produces<CreateClientResponse>(StatusCodes.Status201Created)
 			.Produces(StatusCodes.Status409Conflict);
 	}
 
 	private static async Task<IResult> Handle(
-		CreateClientListRequest request,
+		CreateClientRequest request,
 		Database database,
 		DiskService diskService,
 		CancellationToken cancellationToken
 	)
 	{
+		if (string.IsNullOrWhiteSpace(request.AccessKey) || request.AccessKey.Length > 100
+			|| string.IsNullOrWhiteSpace(request.SecretKey))
+		{
+			return TypedResults.BadRequest("Access key (1–100 characters) and secret key are required.");
+		}
+
 		try
 		{
 			ClientEntity? client = await database.Clients.FirstOrDefaultAsync(
@@ -53,11 +55,11 @@ public static class CreateClientEndpoint
 			);
 			await rollback.ExecuteAllAsync(context, cancellationToken);
 
-			return TypedResults.Created($"objects/{context.Id}");
+			return TypedResults.Created($"clients/{context.Id}", new CreateClientResponse(context.Id, context.AccessKey));
 		}
 		catch (Exception ex)
 		{
-			Log.Error(ex, "Failed to handle get client list endpoint");
+			Log.Error(ex, "Failed to create client");
 
 			throw;
 		}

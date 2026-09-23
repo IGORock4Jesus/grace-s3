@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json.Serialization;
 using GraceS3;
 using GraceS3.Data;
+using GraceS3.Endpoints.Auth.GetAdminAuthConfig;
 using GraceS3.Endpoints.Clients;
 using GraceS3.Files.Endpoints;
 using GraceS3.Services;
@@ -108,7 +109,7 @@ void ConfigureKeycloak(KeycloakInstallationOptions x, WebApplicationBuilder buil
 	x.VerifyTokenAudience = false; // TODO: enable on prod
 }
 
-builder.Services.AddScoped<UserService>().AddSingleton<Database>().AddScoped<DiskService>();
+builder.Services.AddScoped<UserService>().AddScoped<DiskService>();
 
 ConfigureTaskManager();
 void ConfigureTaskManager()
@@ -176,6 +177,7 @@ app.UseAuthorization();
 
 // app.UseAntiforgery();
 
+app.MapGetAdminAuthConfig();
 app.MapCliensEndpoints();
 app.MapObjectsEndpoints();
 

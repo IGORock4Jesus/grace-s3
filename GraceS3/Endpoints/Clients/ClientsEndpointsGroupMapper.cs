@@ -15,5 +15,6 @@ public static class ClientsEndpointsGroupMapper
 
 		GetClientListEndpoint.Map(group);
 		CreateClientEndpoint.Map(group);
+		AdminClientEndpoints.Map(group);
 	}
 }
